@@ -1,0 +1,7 @@
+venv/
+data/raw/
+data/processed/
+*.h5
+__pycache__/
+.DS_Store
+.kaggle/

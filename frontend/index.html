@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>WasteWise — AI Waste Segregation System</title>
+  <meta name="description"
+        content="Upload a photo of your waste and our AI will classify it into
+                 Biodegradable, Recyclable, Non-Recyclable, or Hazardous and
+                 tell you which bin to use." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
+        rel="stylesheet" />
+  <style>
+    /* ── Design tokens ──────────────────────────────────────────────── */
+    :root {
+      --clr-bg:          #0d1117;
+      --clr-surface:     #161b22;
+      --clr-surface2:    #21262d;
+      --clr-border:      rgba(255,255,255,0.08);
+      --clr-text:        #e6edf3;
+      --clr-muted:       #8b949e;
+      --clr-accent:      #3fb950;        /* green */
+      --clr-accent2:     #58a6ff;        /* blue */
+      --clr-hazard:      #f85149;        /* red */
+      --clr-nonrecycle:  #6e7681;        /* grey */
+      --clr-glow:        rgba(63,185,80,0.18);
+
+      --radius-card:     18px;
+      --radius-btn:      12px;
+      --transition:      0.25s cubic-bezier(.4,0,.2,1);
+      --shadow-card:     0 8px 32px rgba(0,0,0,.45);
+      --font:            'Inter', system-ui, sans-serif;
+    }
+
+    /* ── Reset & base ───────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: var(--font);
+      background: var(--clr-bg);
+      color: var(--clr-text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    /* ── Header ─────────────────────────────────────────────────────── */
+    header {
+      width: 100%;
+      padding: 1.25rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      border-bottom: 1px solid var(--clr-border);
+      background: rgba(13,17,23,.85);
+      backdrop-filter: blur(12px);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .logo-icon { font-size: 1.6rem; }
+    .logo-text { font-size: 1.25rem; font-weight: 800; letter-spacing: -0.5px; }
+    .logo-text span { color: var(--clr-accent); }
+    .badge {
+      margin-left: auto;
+      background: rgba(63,185,80,.15);
+      color: var(--clr-accent);
+      border: 1px solid rgba(63,185,80,.35);
+      border-radius: 999px;
+      padding: 0.25rem 0.85rem;
+      font-size: 0.7rem;
+      font-weight: 600;
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    /* ── Hero ───────────────────────────────────────────────────────── */
+    .hero {
+      width: 100%;
+      max-width: 900px;
+      margin: 2.5rem auto 0;
+      padding: 0 1.5rem;
+      text-align: center;
+    }
+    .hero h1 {
+      font-size: clamp(1.9rem, 5vw, 3rem);
+      font-weight: 800;
+      line-height: 1.15;
+      letter-spacing: -1px;
+      background: linear-gradient(135deg, #e6edf3 0%, var(--clr-accent) 55%, var(--clr-accent2) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+    .hero p {
+      margin-top: 0.9rem;
+      color: var(--clr-muted);
+      font-size: 1.05rem;
+      line-height: 1.6;
+      max-width: 580px;
+      margin-inline: auto;
+    }
+    .hero-img {
+      margin-top: 1.8rem;
+      width: 100%;
+      max-width: 700px;
+      border-radius: var(--radius-card);
+      border: 1px solid var(--clr-border);
+      box-shadow: var(--shadow-card);
+      object-fit: cover;
+    }
+
+    /* ── Bin legend ─────────────────────────────────────────────────── */
+    .bin-legend {
+      display: flex;
+      justify-content: center;
+      flex-wrap: wrap;
+      gap: 0.65rem;
+      margin-top: 1.4rem;
+    }
+    .bin-pill {
+      display: flex;
+      align-items: center;
+      gap: 0.45rem;
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: 999px;
+      padding: 0.35rem 0.9rem;
+      font-size: 0.8rem;
+      font-weight: 500;
+      transition: transform var(--transition);
+    }
+    .bin-pill:hover { transform: translateY(-2px); }
+    .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+    .dot-green  { background: #3fb950; }
+    .dot-blue   { background: #58a6ff; }
+    .dot-black  { background: #6e7681; }
+    .dot-red    { background: #f85149; }
+
+    /* ── Main card ──────────────────────────────────────────────────── */
+    main {
+      width: 100%;
+      max-width: 680px;
+      margin: 2.5rem auto 4rem;
+      padding: 0 1.5rem;
+    }
+    .card {
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--radius-card);
+      padding: 2rem;
+      box-shadow: var(--shadow-card);
+    }
+
+    /* ── Drop zone ──────────────────────────────────────────────────── */
+    .drop-zone {
+      border: 2px dashed rgba(255,255,255,.15);
+      border-radius: var(--radius-card);
+      padding: 2.5rem 1.5rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color var(--transition), background var(--transition), box-shadow var(--transition);
+      position: relative;
+    }
+    .drop-zone.drag-over {
+      border-color: var(--clr-accent);
+      background: rgba(63,185,80,.06);
+      box-shadow: 0 0 0 4px var(--clr-glow);
+    }
+    .drop-zone input[type="file"] {
+      position: absolute;
+      inset: 0;
+      opacity: 0;
+      cursor: pointer;
+      width: 100%;
+      height: 100%;
+    }
+    .drop-icon {
+      font-size: 3rem;
+      margin-bottom: 0.75rem;
+      display: block;
+      transition: transform var(--transition);
+    }
+    .drop-zone:hover .drop-icon { transform: translateY(-4px) scale(1.05); }
+    .drop-zone h2 {
+      font-size: 1.05rem;
+      font-weight: 600;
+      color: var(--clr-text);
+    }
+    .drop-zone p {
+      margin-top: 0.35rem;
+      font-size: 0.82rem;
+      color: var(--clr-muted);
+    }
+
+    /* ── Preview ────────────────────────────────────────────────────── */
+    #preview-wrap {
+      display: none;
+      margin-top: 1.5rem;
+      position: relative;
+    }
+    #preview-img {
+      width: 100%;
+      max-height: 300px;
+      object-fit: contain;
+      border-radius: 12px;
+      border: 1px solid var(--clr-border);
+    }
+    #preview-name {
+      margin-top: 0.6rem;
+      font-size: 0.8rem;
+      color: var(--clr-muted);
+      text-align: center;
+    }
+    #clear-btn {
+      position: absolute;
+      top: 8px;
+      right: 8px;
+      background: rgba(0,0,0,.6);
+      color: #fff;
+      border: none;
+      border-radius: 50%;
+      width: 28px;
+      height: 28px;
+      font-size: 0.9rem;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: background var(--transition);
+    }
+    #clear-btn:hover { background: var(--clr-hazard); }
+
+    /* ── Classify button ────────────────────────────────────────────── */
+    #classify-btn {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      margin-top: 1.4rem;
+      width: 100%;
+      padding: 0.9rem 1.5rem;
+      background: linear-gradient(135deg, #2ea043 0%, #3fb950 100%);
+      color: #fff;
+      border: none;
+      border-radius: var(--radius-btn);
+      font-family: var(--font);
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: opacity var(--transition), transform var(--transition), box-shadow var(--transition);
+      box-shadow: 0 4px 20px rgba(63,185,80,.35);
+    }
+    #classify-btn:hover:not(:disabled) {
+      opacity: 0.92;
+      transform: translateY(-2px);
+      box-shadow: 0 8px 28px rgba(63,185,80,.5);
+    }
+    #classify-btn:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+      transform: none;
+    }
+    .btn-spinner {
+      width: 18px;
+      height: 18px;
+      border: 2.5px solid rgba(255,255,255,.35);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Result card ────────────────────────────────────────────────── */
+    #result-section {
+      display: none;
+      margin-top: 1.75rem;
+    }
+    .result-card {
+      background: var(--clr-surface2);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--radius-card);
+      padding: 1.5rem;
+      animation: fadeUp 0.4s ease both;
+    }
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(14px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    .result-header {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .result-bin-dot {
+      width: 52px;
+      height: 52px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 1.5rem;
+      box-shadow: 0 0 0 6px rgba(255,255,255,.06);
+    }
+    .result-texts h3 {
+      font-size: 1.4rem;
+      font-weight: 800;
+      letter-spacing: -0.5px;
+    }
+    .result-texts .bin-label {
+      font-size: 0.82rem;
+      color: var(--clr-muted);
+      margin-top: 0.25rem;
+    }
+    .confidence-bar-wrap {
+      margin-top: 1.2rem;
+    }
+    .confidence-bar-wrap label {
+      font-size: 0.78rem;
+      color: var(--clr-muted);
+      font-weight: 500;
+    }
+    .confidence-bar {
+      margin-top: 0.4rem;
+      height: 8px;
+      background: rgba(255,255,255,.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .confidence-fill {
+      height: 100%;
+      border-radius: 999px;
+      transition: width 0.8s cubic-bezier(.4,0,.2,1);
+    }
+    .tip-box {
+      margin-top: 1rem;
+      background: rgba(255,255,255,.04);
+      border-left: 3px solid var(--clr-accent);
+      border-radius: 0 8px 8px 0;
+      padding: 0.7rem 0.95rem;
+      font-size: 0.85rem;
+      color: var(--clr-muted);
+      line-height: 1.55;
+    }
+
+    /* ── Score breakdown ────────────────────────────────────────────── */
+    .scores-grid {
+      margin-top: 1.2rem;
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0.6rem;
+    }
+    .score-item { display: flex; flex-direction: column; gap: 0.3rem; }
+    .score-label {
+      font-size: 0.72rem;
+      color: var(--clr-muted);
+      font-weight: 500;
+      display: flex;
+      justify-content: space-between;
+    }
+    .score-bar {
+      height: 5px;
+      background: rgba(255,255,255,.08);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .score-fill { height: 100%; border-radius: 999px; }
+
+    /* ── Error state ────────────────────────────────────────────────── */
+    #error-msg {
+      display: none;
+      margin-top: 1.2rem;
+      padding: 0.85rem 1rem;
+      background: rgba(248,81,73,.1);
+      border: 1px solid rgba(248,81,73,.3);
+      border-radius: 10px;
+      color: #f85149;
+      font-size: 0.88rem;
+      animation: fadeUp 0.3s ease both;
+    }
+
+    /* ── Pipeline steps ─────────────────────────────────────────────── */
+    .steps {
+      display: flex;
+      gap: 0;
+      margin-top: 1.8rem;
+      background: var(--clr-surface2);
+      border: 1px solid var(--clr-border);
+      border-radius: var(--radius-card);
+      overflow: hidden;
+    }
+    .step {
+      flex: 1;
+      padding: 1rem 0.75rem;
+      text-align: center;
+      border-right: 1px solid var(--clr-border);
+      transition: background var(--transition);
+    }
+    .step:last-child { border-right: none; }
+    .step-num {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--clr-surface);
+      border: 1px solid var(--clr-border);
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--clr-muted);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin: 0 auto 0.5rem;
+    }
+    .step.active .step-num {
+      background: var(--clr-accent);
+      border-color: var(--clr-accent);
+      color: #fff;
+    }
+    .step-title {
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--clr-muted);
+    }
+    .step.active .step-title { color: var(--clr-text); }
+
+    /* ── Footer ─────────────────────────────────────────────────────── */
+    footer {
+      margin-top: auto;
+      width: 100%;
+      border-top: 1px solid var(--clr-border);
+      padding: 1.25rem 2rem;
+      text-align: center;
+      font-size: 0.78rem;
+      color: var(--clr-muted);
+    }
+
+    /* ── Responsive ─────────────────────────────────────────────────── */
+    @media (max-width: 480px) {
+      .scores-grid { grid-template-columns: 1fr; }
+      .steps { flex-direction: column; }
+      .step { border-right: none; border-bottom: 1px solid var(--clr-border); }
+      .step:last-child { border-bottom: none; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Header ──────────────────────────────────────────────────────────────── -->
+<header>
+  <span class="logo-icon" aria-hidden="true">♻️</span>
+  <span class="logo-text">Waste<span>Wise</span></span>
+  <span class="badge">AI Demo · v0.2</span>
+</header>
+
+<!-- ── Hero ────────────────────────────────────────────────────────────────── -->
+<section class="hero">
+  <h1>Smart Waste Classification<br/>Powered by AI</h1>
+  <p>Upload a photo of your waste item and our MobileNetV2 model will tell you
+     exactly which bin it belongs to — instantly.</p>
+  <img class="hero-img" src="bins_hero.jpg" alt="Four colour-coded waste bins: green organic, blue recyclable, black non-recyclable, red hazardous" />
+  <div class="bin-legend" aria-label="Bin colour legend">
+    <span class="bin-pill"><span class="dot dot-green" aria-hidden="true"></span>Biodegradable</span>
+    <span class="bin-pill"><span class="dot dot-blue"  aria-hidden="true"></span>Recyclable</span>
+    <span class="bin-pill"><span class="dot dot-black" aria-hidden="true"></span>Non-Recyclable</span>
+    <span class="bin-pill"><span class="dot dot-red"   aria-hidden="true"></span>Hazardous</span>
+  </div>
+</section>
+
+<!-- ── Upload card ──────────────────────────────────────────────────────────── -->
+<main>
+  <div class="card" role="main">
+
+    <!-- Pipeline stages indicator -->
+    <div class="steps" aria-label="Pipeline stages">
+      <div class="step active" id="step-1">
+        <div class="step-num">1</div>
+        <div class="step-title">Image Capture</div>
+      </div>
+      <div class="step" id="step-2">
+        <div class="step-num">2</div>
+        <div class="step-title">Preprocessing</div>
+      </div>
+      <div class="step" id="step-3">
+        <div class="step-num">3</div>
+        <div class="step-title">Classification</div>
+      </div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="drop-zone" id="drop-zone" role="button" aria-label="Upload waste image">
+      <input type="file" id="file-input" accept="image/*" aria-label="Choose image file" />
+      <span class="drop-icon" aria-hidden="true">🗑️</span>
+      <h2>Drop your image here, or click to browse</h2>
+      <p>Supports JPG, PNG, WEBP · Max 20 MB</p>
+    </div>
+
+    <!-- Image preview -->
+    <div id="preview-wrap">
+      <img id="preview-img" src="" alt="Preview of uploaded waste item" />
+      <p id="preview-name"></p>
+      <button id="clear-btn" aria-label="Remove image" title="Remove image">✕</button>
+    </div>
+
+    <!-- Classify button -->
+    <button id="classify-btn" disabled aria-label="Upload and classify waste image">
+      <div class="btn-spinner" id="btn-spinner" aria-hidden="true"></div>
+      <span id="btn-label">Upload &amp; Classify</span>
+    </button>
+
+    <!-- Error message -->
+    <div id="error-msg" role="alert" aria-live="assertive"></div>
+
+    <!-- Result -->
+    <div id="result-section" aria-live="polite">
+      <div class="result-card">
+        <div class="result-header">
+          <div class="result-bin-dot" id="result-dot" aria-hidden="true"></div>
+          <div class="result-texts">
+            <h3 id="result-category">—</h3>
+            <p class="bin-label" id="result-bin-label">—</p>
+          </div>
+        </div>
+
+        <div class="confidence-bar-wrap">
+          <label>Confidence: <strong id="confidence-text">—</strong></label>
+          <div class="confidence-bar">
+            <div class="confidence-fill" id="confidence-fill" style="width:0%"></div>
+          </div>
+        </div>
+
+        <p class="tip-box" id="result-tip">—</p>
+
+        <!-- All-class score breakdown -->
+        <div class="scores-grid" id="scores-grid" aria-label="All class probabilities"></div>
+      </div>
+    </div>
+
+  </div><!-- /.card -->
+</main>
+
+<footer>
+  WasteWise — College Project Demo &nbsp;·&nbsp;
+  MobileNetV2 Transfer Learning &nbsp;·&nbsp;
+  Flask + TensorFlow backend
+</footer>
+
+<script>
+  /* ── Constants ─────────────────────────────────────────────────────────── */
+  const API_URL = 'http://localhost:5050/classify';
+
+  const BIN_STYLES = {
+    'Biodegradable':  { bg: '#3fb950', emoji: '🌿' },
+    'Recyclable':     { bg: '#58a6ff', emoji: '♻️' },
+    'Non-Recyclable': { bg: '#6e7681', emoji: '🗑️' },
+    'Hazardous':      { bg: '#f85149', emoji: '☣️' },
+  };
+
+  /* ── DOM refs ───────────────────────────────────────────────────────────── */
+  const fileInput      = document.getElementById('file-input');
+  const dropZone       = document.getElementById('drop-zone');
+  const previewWrap    = document.getElementById('preview-wrap');
+  const previewImg     = document.getElementById('preview-img');
+  const previewName    = document.getElementById('preview-name');
+  const clearBtn       = document.getElementById('clear-btn');
+  const classifyBtn    = document.getElementById('classify-btn');
+  const btnLabel       = document.getElementById('btn-label');
+  const btnSpinner     = document.getElementById('btn-spinner');
+  const errorMsg       = document.getElementById('error-msg');
+  const resultSection  = document.getElementById('result-section');
+  const resultDot      = document.getElementById('result-dot');
+  const resultCat      = document.getElementById('result-category');
+  const resultBinLabel = document.getElementById('result-bin-label');
+  const confText       = document.getElementById('confidence-text');
+  const confFill       = document.getElementById('confidence-fill');
+  const resultTip      = document.getElementById('result-tip');
+  const scoresGrid     = document.getElementById('scores-grid');
+
+  const steps = [
+    document.getElementById('step-1'),
+    document.getElementById('step-2'),
+    document.getElementById('step-3'),
+  ];
+
+  let selectedFile = null;
+
+  /* ── Pipeline step highlight ────────────────────────────────────────────── */
+  function setStep(n) {           // n = 1-based
+    steps.forEach((s, i) => s.classList.toggle('active', i < n));
+  }
+
+  /* ── File handling ──────────────────────────────────────────────────────── */
+  function handleFile(file) {
+    if (!file || !file.type.startsWith('image/')) {
+      showError('Please select a valid image file.');
+      return;
+    }
+    selectedFile = file;
+    const url = URL.createObjectURL(file);
+    previewImg.src = url;
+    previewName.textContent = `${file.name}  (${(file.size / 1024).toFixed(1)} KB)`;
+    previewWrap.style.display = 'block';
+    classifyBtn.disabled = false;
+    hideError();
+    resultSection.style.display = 'none';
+    setStep(1);
+  }
+
+  fileInput.addEventListener('change', e => handleFile(e.target.files[0]));
+
+  /* Drag-and-drop */
+  dropZone.addEventListener('dragover', e => {
+    e.preventDefault();
+    dropZone.classList.add('drag-over');
+  });
+  dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+  dropZone.addEventListener('drop', e => {
+    e.preventDefault();
+    dropZone.classList.remove('drag-over');
+    handleFile(e.dataTransfer.files[0]);
+  });
+
+  /* Clear */
+  clearBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    selectedFile = null;
+    fileInput.value = '';
+    previewImg.src = '';
+    previewWrap.style.display = 'none';
+    classifyBtn.disabled = true;
+    resultSection.style.display = 'none';
+    hideError();
+    setStep(1);
+  });
+
+  /* ── Error helpers ──────────────────────────────────────────────────────── */
+  function showError(msg) {
+    errorMsg.textContent = msg;
+    errorMsg.style.display = 'block';
+  }
+  function hideError() {
+    errorMsg.style.display = 'none';
+  }
+
+  /* ── Classify ───────────────────────────────────────────────────────────── */
+  classifyBtn.addEventListener('click', async () => {
+    if (!selectedFile) return;
+
+    // Loading state
+    classifyBtn.disabled = true;
+    btnLabel.textContent  = 'Analysing…';
+    btnSpinner.style.display = 'block';
+    hideError();
+    resultSection.style.display = 'none';
+    setStep(2);
+
+    const formData = new FormData();
+    formData.append('image', selectedFile);
+
+    try {
+      setStep(3);
+      const res = await fetch(API_URL, { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (!res.ok) {
+        throw new Error(data.error || `Server error ${res.status}`);
+      }
+
+      renderResult(data);
+    } catch (err) {
+      if (err.name === 'TypeError') {
+        showError('Cannot reach the server. Is the Flask app running on port 5050?');
+      } else {
+        showError(err.message);
+      }
+      setStep(1);
+    } finally {
+      classifyBtn.disabled = false;
+      btnLabel.textContent  = 'Upload & Classify';
+      btnSpinner.style.display = 'none';
+    }
+  });
+
+  /* ── Render result ──────────────────────────────────────────────────────── */
+  function renderResult(data) {
+    const { category, confidence, bin_label, tip, all_scores } = data;
+    const style = BIN_STYLES[category] || { bg: '#8b949e', emoji: '❓' };
+
+    // Header
+    resultDot.style.background = style.bg;
+    resultDot.style.boxShadow  = `0 0 0 8px ${style.bg}22`;
+    resultDot.textContent = style.emoji;
+    resultCat.textContent = category;
+    resultCat.style.color = style.bg;
+    resultBinLabel.textContent = `📦  ${bin_label}`;
+
+    // Confidence bar
+    const pct = Math.round(confidence * 100);
+    confText.textContent = `${pct}%`;
+    confFill.style.background = style.bg;
+    // Animate after a tick
+    setTimeout(() => { confFill.style.width = `${pct}%`; }, 30);
+
+    // Tip
+    resultTip.textContent = tip;
+    resultTip.style.borderLeftColor = style.bg;
+
+    // All-class breakdown
+    scoresGrid.innerHTML = '';
+    const ORDER = ['Biodegradable', 'Recyclable', 'Non-Recyclable', 'Hazardous'];
+    ORDER.forEach(cls => {
+      const score = all_scores[cls] ?? 0;
+      const pctCls = Math.round(score * 100);
+      const s = BIN_STYLES[cls] || { bg: '#8b949e' };
+      scoresGrid.innerHTML += `
+        <div class="score-item">
+          <div class="score-label">
+            <span>${cls}</span>
+            <span>${pctCls}%</span>
+          </div>
+          <div class="score-bar">
+            <div class="score-fill" style="width:${pctCls}%; background:${s.bg};"></div>
+          </div>
+        </div>`;
+    });
+
+    resultSection.style.display = 'block';
+    resultSection.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+</script>
+</body>
+</html>

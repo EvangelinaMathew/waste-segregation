@@ -1,157 +1,109 @@
-"""
-app.py — Flask REST API
-========================
-POST /classify   — accepts a multipart image upload, preprocesses it,
-                   runs it through the saved MobileNetV2 model, and
-                   returns JSON {"category": "...", "confidence": 0.XX}
-
-GET  /health     — simple liveness check
-
-Run:
-    python backend/app.py
-"""
-
 import os
-import io
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+import io, json
 from pathlib import Path
-
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
 import tensorflow as tf
 
-# ── Config ────────────────────────────────────────────────────────────────────
-MODEL_PATH = Path(__file__).resolve().parent / "model" / "waste_classifier.h5"
-IMG_SIZE   = (224, 224)
-CLASSES    = ["Biodegradable", "Hazardous", "Non-Recyclable", "Recyclable"]
+MODEL_DIR = Path(__file__).resolve().parent / "model"
+IMG_SIZE = (224, 224)
+THRESHOLD = 0.6           # custom model must be at least this sure
+GENERAL_THRESHOLD = 0.20  # fallback model (1000 classes spreads confidence thinner)
 
-# Bin colour / disposal hint returned alongside the category
-BIN_INFO = {
-    "Biodegradable": {
-        "bin_colour": "Green",
-        "bin_label": "Compost / Organic Bin",
-        "tip": "Compostable — place in the green organic bin.",
-    },
-    "Recyclable": {
-        "bin_colour": "Blue",
-        "bin_label": "Recycling Bin",
-        "tip": "Recyclable — rinse and place in the blue recycling bin.",
-    },
-    "Non-Recyclable": {
-        "bin_colour": "Black",
-        "bin_label": "General Waste Bin",
-        "tip": "Non-recyclable — place in the black general waste bin.",
-    },
-    "Hazardous": {
-        "bin_colour": "Red",
-        "bin_label": "Hazardous Waste Bin",
-        "tip": "Hazardous — take to a designated hazardous waste facility.",
-    },
+GREEN = ("Green", "Wet / Biodegradable", "Compostable. Put it in the green bin.")
+BLUE  = ("Blue", "Dry / Recyclable", "Recyclable. Keep it clean and dry, blue bin.")
+RED   = ("Red", "Hazardous", "Hazardous. Never mix with normal waste; hand over at a collection point.")
+REWST = ("Red", "Hazardous / E-waste", "E-waste. Give it to an e-waste drive or recycler.")
+BLACK = ("Black", "Non-recyclable", "Non-recyclable. Put it in the black general waste bin.")
+
+# Layer 1: classes of YOUR trained model (names = folder names in data/processed)
+BIN = {
+    "plastic_bottle": BLUE, "paper": BLUE, "glass": BLUE, "metal_can": BLUE,
+    "plastic_cup": BLUE,
+    "food_waste": GREEN, "egg_shells_tea": GREEN, "yard_waste": GREEN,
+    "battery": RED, "paint_chemical": RED, "ewaste": REWST,
+    "plastic_bag": BLACK, "thermocol": BLACK, "diaper_sanitary": BLACK,
+    "ceramic": BLACK, "pen": BLACK, "paper_cup": BLACK,
 }
 
-# ── App & model ───────────────────────────────────────────────────────────────
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-tf.get_logger().setLevel("ERROR")
+# Layer 2: ImageNet names (general fallback). Unused names are harmless.
+IMAGENET_BIN = {
+    "ballpoint": BLACK, "fountain_pen": BLACK, "rubber_eraser": BLACK,
+    "water_bottle": BLUE, "pop_bottle": BLUE, "beer_bottle": BLUE,
+    "wine_bottle": BLUE, "water_jug": BLUE, "pill_bottle": BLUE,
+    "carton": BLUE, "envelope": BLUE,
+    "plastic_bag": BLACK, "coffee_mug": BLACK, "toilet_tissue": BLACK, "diaper": BLACK,
+    "cellular_telephone": REWST, "laptop": REWST, "notebook": REWST,
+    "mouse": REWST, "remote_control": REWST, "ipod": REWST,
+    "hand-held_computer": REWST, "computer_keyboard": REWST, "joystick": REWST,
+    "digital_watch": REWST,
+    "banana": GREEN, "orange": GREEN, "lemon": GREEN, "Granny_Smith": GREEN,
+    "strawberry": GREEN, "pineapple": GREEN, "broccoli": GREEN,
+    "cucumber": GREEN, "head_cabbage": GREEN, "bell_pepper": GREEN,
+    "corn": GREEN, "mushroom": GREEN,
+}
 
 app = Flask(__name__)
-CORS(app)   # allow requests from file:// (origin "null") and any other origin
+CORS(app)
 
-# Load model once at startup
-_model = None
-
-
-def get_model():
-    global _model
-    if _model is None:
-        if not MODEL_PATH.exists():
-            raise FileNotFoundError(
-                f"Model not found at {MODEL_PATH}. "
-                "Run backend/train_model.py first."
-            )
-        print(f"Loading model from {MODEL_PATH} …", flush=True)
-        _model = tf.keras.models.load_model(str(MODEL_PATH))
-        print("Model loaded.", flush=True)
-    return _model
+model = tf.keras.models.load_model(MODEL_DIR / "waste_classifier.keras")
+labels = json.load(open(MODEL_DIR / "labels.json"))
+general = tf.keras.applications.MobileNetV2(weights="imagenet")   # downloads ~14 MB first time
+model.predict(np.zeros((1, 224, 224, 3), dtype="float32"), verbose=0)   # warm-up
+general.predict(np.zeros((1, 224, 224, 3), dtype="float32"), verbose=0)
+print("Models ready. Classes:", labels, flush=True)
 
 
-# ── Preprocessing helper ──────────────────────────────────────────────────────
-def preprocess_image(file_bytes: bytes) -> np.ndarray:
-    """
-    Mirror the same pipeline used in preprocess.py + train_model.py:
-      1. Open & convert to RGB
-      2. Resize to 224×224
-      3. Apply MobileNetV2 preprocess_input (scales [0,255] → [-1,1])
-    Returns a (1, 224, 224, 3) float32 array ready for model.predict().
-    """
-    img = Image.open(io.BytesIO(file_bytes)).convert("RGB")
-    img = img.resize(IMG_SIZE, Image.LANCZOS)
+def preprocess_image(file_bytes):
+    img = Image.open(io.BytesIO(file_bytes)).convert("RGB").resize(IMG_SIZE, Image.LANCZOS)
     arr = np.array(img, dtype=np.float32)
-    arr = tf.keras.applications.mobilenet_v2.preprocess_input(arr)
-    return np.expand_dims(arr, axis=0)   # add batch dim
+    arr = tf.keras.applications.mobilenet_v2.preprocess_input(arr)   # same as training
+    return np.expand_dims(arr, 0)
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-@app.route("/health", methods=["GET"])
+def none_result(conf):
+    return jsonify({"item": "none", "bin": None, "color": None,
+                    "tip": None, "confidence": round(conf, 4)})
+
+
+@app.route("/health")
 def health():
-    return jsonify({"status": "ok", "model_loaded": _model is not None})
+    return jsonify({"status": "ok", "classes": labels})
 
 
 @app.route("/classify", methods=["POST"])
 def classify():
-    # ── Validate upload ───────────────────────────────────────────────────────
     if "image" not in request.files:
         return jsonify({"error": "No image file provided. Use field name 'image'."}), 400
-
-    file = request.files["image"]
-    if file.filename == "":
-        return jsonify({"error": "Empty filename."}), 400
-
-    allowed = {"jpg", "jpeg", "png", "webp", "bmp", "gif"}
-    ext = file.filename.rsplit(".", 1)[-1].lower() if "." in file.filename else ""
-    if ext not in allowed:
-        return jsonify({"error": f"Unsupported file type: .{ext}"}), 415
-
-    # ── Read & preprocess ─────────────────────────────────────────────────────
     try:
-        file_bytes = file.read()
-        img_tensor = preprocess_image(file_bytes)
+        x = preprocess_image(request.files["image"].read())
     except Exception as exc:
         return jsonify({"error": f"Could not decode image: {exc}"}), 422
 
-    # ── Inference ─────────────────────────────────────────────────────────────
-    try:
-        model  = get_model()
-        preds  = model.predict(img_tensor, verbose=0)[0]   # shape: (4,)
-    except FileNotFoundError as exc:
-        return jsonify({"error": str(exc)}), 503
-    except Exception as exc:
-        return jsonify({"error": f"Inference error: {exc}"}), 500
+    # Layer 1: your trained model
+    probs = model.predict(x, verbose=0)[0]
+    i = int(np.argmax(probs))
+    item, conf = labels[i], float(probs[i])
+    if item != "background" and conf >= THRESHOLD and item in BIN:
+        color, kind, tip = BIN[item]
+        return jsonify({"item": item, "bin": kind, "color": color, "tip": tip,
+                        "confidence": round(conf, 4), "source": "custom"})
 
-    # ── Build response ────────────────────────────────────────────────────────
-    top_idx    = int(np.argmax(preds))
-    category   = CLASSES[top_idx]
-    confidence = float(preds[top_idx])
-
-    # All class probabilities (for a nice debug view in the frontend)
-    all_scores = {cls: round(float(preds[i]), 4) for i, cls in enumerate(CLASSES)}
-
-    response = {
-        "category":   category,
-        "confidence": round(confidence, 4),
-        **BIN_INFO[category],
-        "all_scores": all_scores,
-    }
-    return jsonify(response)
+    # Layer 2: general ImageNet model
+    gp = general.predict(x, verbose=0)
+    top = tf.keras.applications.mobilenet_v2.decode_predictions(gp, top=3)[0]
+    print("general top3:", [(n, round(float(p), 2)) for _, n, p in top], flush=True)
+    for _, name, p in top:
+        if name in IMAGENET_BIN and float(p) >= GENERAL_THRESHOLD:
+            color, kind, tip = IMAGENET_BIN[name]
+            return jsonify({"item": name.replace("_", " "), "bin": kind, "color": color,
+                            "tip": tip, "confidence": round(float(p), 4),
+                            "source": "general"})
+    return none_result(conf)
 
 
-# ── Entry point ───────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    # Pre-load the model so the first request isn't slow
-    try:
-        get_model()
-    except FileNotFoundError as e:
-        print(f"\n⚠️  WARNING: {e}")
-        print("   The server will start, but /classify will return 503 until the model exists.\n")
-
     app.run(host="0.0.0.0", port=5050, debug=False)

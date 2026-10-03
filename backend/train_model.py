@@ -1,18 +1,16 @@
 """
 train_model.py — Stage 3: Detection & Classification Module
-===========================================================
-Fine-tunes MobileNetV2 (ImageNet weights) on the 4 waste categories
-produced by preprocess.py.  Two-phase training:
-  Phase 1 — train only the new classification head (frozen base)
-  Phase 2 — unfreeze the top N layers and fine-tune end-to-end
-
-Saves the final model to backend/model/waste_classifier.h5
+Fine-tunes MobileNetV2 (ImageNet weights) on the item classes found in
+data/processed/train (built by build_dataset.py).
+Two-phase training: head only, then fine-tune the top layers.
+Saves backend/model/waste_classifier.keras and backend/model/labels.json
 
 Run:
     python backend/train_model.py
 """
 
 import os
+import json
 from pathlib import Path
 
 import numpy as np
@@ -25,23 +23,21 @@ from tensorflow.keras.preprocessing.image import ImageDataGenerator
 REPO_ROOT      = Path(__file__).resolve().parent.parent
 PROCESSED_DIR  = REPO_ROOT / "data" / "processed"
 MODEL_DIR      = Path(__file__).resolve().parent / "model"
-MODEL_PATH     = MODEL_DIR / "waste_classifier.h5"
+MODEL_PATH     = MODEL_DIR / "waste_classifier.keras"
 
 IMG_SIZE       = (224, 224)
-BATCH_SIZE     = 16          # small batch → fits comfortably on laptop GPU/CPU
-EPOCHS_PHASE1  = 5           # head-only warm-up
-EPOCHS_PHASE2  = 10          # fine-tune top layers
-UNFREEZE_LAST  = 30          # how many MobileNetV2 layers to unfreeze in phase 2
-CLASSES        = ["Biodegradable", "Hazardous", "Non-Recyclable", "Recyclable"]
+BATCH_SIZE     = 32
+EPOCHS_PHASE1  = 4           # head-only warm-up
+EPOCHS_PHASE2  = 4           # fine-tune top layers
+UNFREEZE_LAST  = 30
+CLASSES        = sorted(p.name for p in (PROCESSED_DIR / "train").iterdir() if p.is_dir())
 NUM_CLASSES    = len(CLASSES)
 SEED           = 42
 
 
 # ── Data generators ───────────────────────────────────────────────────────────
 def make_generators():
-    # preprocess_input expects raw uint8 [0, 255] and maps to [-1, 1].
-    # Do NOT also set rescale — that would pre-shrink pixels to [0, 1] and
-    # cause preprocess_input to map everything to [-1, ~-0.99], destroying signal.
+    # preprocess_input maps [0,255] -> [-1,1]. Do NOT also set rescale.
     train_aug = ImageDataGenerator(
         rotation_range=20,
         width_shift_range=0.1,
@@ -78,13 +74,13 @@ def make_generators():
 
 
 # ── Model construction ────────────────────────────────────────────────────────
-def build_model() -> tf.keras.Model:
+def build_model():
     base = MobileNetV2(
         input_shape=(*IMG_SIZE, 3),
         include_top=False,
         weights="imagenet",
     )
-    base.trainable = False   # freeze entire base for phase 1
+    base.trainable = False
 
     inputs = tf.keras.Input(shape=(*IMG_SIZE, 3))
     x = base(inputs, training=False)
@@ -132,6 +128,8 @@ def train():
     train_gen, val_gen = make_generators()
     print(f"  Classes: {train_gen.class_indices}")
     print(f"  Train samples: {train_gen.samples}  |  Val samples: {val_gen.samples}")
+    MODEL_DIR.mkdir(parents=True, exist_ok=True)
+    json.dump(CLASSES, open(MODEL_DIR / "labels.json", "w"))
 
     model, base = build_model()
     model.summary(line_length=80)
@@ -158,12 +156,11 @@ def train():
     print(f"PHASE 2 — Fine-tuning top {UNFREEZE_LAST} layers of MobileNetV2")
     print("═" * 60)
     base.trainable = True
-    # Freeze all layers EXCEPT the last UNFREEZE_LAST
     for layer in base.layers[:-UNFREEZE_LAST]:
         layer.trainable = False
 
     model.compile(
-        optimizer=optimizers.Adam(learning_rate=1e-4),   # lower LR for fine-tune
+        optimizer=optimizers.Adam(learning_rate=1e-4),
         loss="categorical_crossentropy",
         metrics=["accuracy"],
     )
@@ -179,14 +176,12 @@ def train():
     model.save(str(MODEL_PATH))
     print(f"\n✅  Model saved to: {MODEL_PATH}")
 
-    # Quick eval
     print("\nFinal evaluation on validation set:")
     loss, acc = model.evaluate(val_gen, verbose=0)
     print(f"  Val loss: {loss:.4f}  |  Val accuracy: {acc:.4f}")
 
 
 if __name__ == "__main__":
-    # Suppress TF info/warning noise in demo
     os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
     tf.get_logger().setLevel("ERROR")
     train()

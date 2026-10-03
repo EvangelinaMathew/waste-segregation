@@ -1,9 +1,7 @@
 venv/
-data/raw/
-data/processed/
+data/
 *.h5
 __pycache__/
 .DS_Store
 .kaggle/
 *.keras
-data/videos/

@@ -27,8 +27,8 @@ MODEL_PATH     = MODEL_DIR / "waste_classifier.keras"
 
 IMG_SIZE       = (224, 224)
 BATCH_SIZE     = 32
-EPOCHS_PHASE1  = 4           # head-only warm-up
-EPOCHS_PHASE2  = 4           # fine-tune top layers
+EPOCHS_PHASE1  = 6           # head-only warm-up
+EPOCHS_PHASE2  = 8           # fine-tune top layers
 UNFREEZE_LAST  = 30
 CLASSES        = sorted(p.name for p in (PROCESSED_DIR / "train").iterdir() if p.is_dir())
 NUM_CLASSES    = len(CLASSES)

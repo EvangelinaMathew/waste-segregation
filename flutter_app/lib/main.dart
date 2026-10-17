@@ -4,7 +4,6 @@ import 'package:camera/camera.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 
-// CHANGE THIS to your Mac's IP (use http://localhost:5000 for Chrome)
 const apiUrl = 'http://localhost:5050/classify';
 
 late List<CameraDescription> cameras;
@@ -25,13 +24,18 @@ class _ScannerState extends State<Scanner> {
   late CameraController cam;
   bool ready = false, busy = false;
   Timer? timer;
-  String item = '', binType = '', color = '';
+  String name = '', binType = '', color = '';
   double conf = 0;
-  final recent = <String>[];   // smoothing: last 3 results
+  List<String> guide = [];
+  final recent = <String>[];
 
   static const palette = {
-    'Green': Colors.green, 'Blue': Colors.blue,
-    'Red': Colors.red, 'Black': Colors.black87,
+    'Green': Color(0xFF2E9E4F), 'Blue': Color(0xFF1E6FD9),
+    'Red': Color(0xFFD62F2F), 'Black': Color(0xFF2B2B2B),
+  };
+  static const icons = {
+    'Green': Icons.eco, 'Blue': Icons.recycling,
+    'Red': Icons.warning_amber_rounded, 'Black': Icons.delete_outline,
   };
 
   @override
@@ -55,16 +59,17 @@ class _ScannerState extends State<Scanner> {
             'image', await shot.readAsBytes(), filename: 'f.jpg'));
       final res = await http.Response.fromStream(await req.send());
       final j = jsonDecode(res.body);
-      recent.add(j['color'] ?? 'none');
+      final key = (j['item'] ?? 'none').toString();
+      recent.add(key);
       if (recent.length > 3) recent.removeAt(0);
-      // only update the screen if 2 of the last 3 agree (reduces flicker)
-      final agree = recent.where((c) => c == (j['color'] ?? 'none')).length >= 2;
-      if (agree) {
+      // update only if 2 of the last 3 agree (reduces flicker)
+      if (recent.where((c) => c == key).length >= 2) {
         setState(() {
-          item = j['item'];
+          name = j['name'] ?? '';
           binType = j['bin'] ?? '';
           color = j['color'] ?? '';
           conf = (j['confidence'] as num).toDouble();
+          guide = (j['guideline'] as List?)?.map((e) => e.toString()).toList() ?? [];
         });
       }
     } catch (e) {
@@ -80,27 +85,119 @@ class _ScannerState extends State<Scanner> {
     super.dispose();
   }
 
+  Widget resultCard(Color c) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(22, 20, 22, 28),
+      decoration: BoxDecoration(
+        color: c,
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(icons[color], color: Colors.white, size: 38),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(name, style: const TextStyle(fontSize: 26, color: Colors.white,
+                  fontWeight: FontWeight.bold)),
+              Text('${color.toUpperCase()} BIN  •  $binType',
+                  style: const TextStyle(fontSize: 15, color: Colors.white70)),
+            ]),
+          ),
+        ]),
+        const SizedBox(height: 14),
+        Row(children: [
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(6),
+              child: LinearProgressIndicator(
+                value: conf.clamp(0.0, 1.0), minHeight: 8,
+                backgroundColor: Colors.white24, color: Colors.white),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Text('${(conf * 100).toStringAsFixed(0)}%',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        ]),
+        const SizedBox(height: 14),
+        const Text('How to dispose',
+            style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 6),
+        for (final g in guide)
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Text('•  $g',
+                style: const TextStyle(color: Colors.white, fontSize: 14, height: 1.3)),
+          ),
+      ]),
+    );
+  }
+
+  Widget emptyCard() {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(22, 22, 22, 30),
+      decoration: const BoxDecoration(
+        color: Color(0xE6101418),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+      ),
+      child: const Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.center_focus_strong, color: Colors.white70, size: 34),
+        SizedBox(height: 8),
+        Text('Point the camera at a waste item',
+            style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
+        SizedBox(height: 4),
+        Text('Hold it steady, one item at a time',
+            style: TextStyle(color: Colors.white54, fontSize: 14)),
+      ]),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (!ready) return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    final c = palette[color] ?? Colors.grey;
+    if (!ready) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
     final found = color.isNotEmpty;
+    final c = palette[color] ?? Colors.blueGrey;
+    final ps = cam.value.previewSize!;
     return Scaffold(
+      backgroundColor: Colors.black,
       body: Stack(children: [
-        Positioned.fill(child: CameraPreview(cam)),
+        Positioned.fill(
+          child: FittedBox(
+            fit: BoxFit.cover,
+            child: SizedBox(
+                width: ps.height, height: ps.width, child: CameraPreview(cam)),
+          ),
+        ),
+        SafeArea(
+          child: Align(
+            alignment: Alignment.topCenter,
+            child: Container(
+              margin: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              decoration: BoxDecoration(
+                  color: const Color(0x99000000),
+                  borderRadius: BorderRadius.circular(20)),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.recycling, color: Color(0xFF4CD964), size: 20),
+                SizedBox(width: 8),
+                Text('WasteWise  •  Live Scanner',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+          ),
+        ),
         Align(
           alignment: Alignment.bottomCenter,
-          child: Container(
-            width: double.infinity,
-            padding: const EdgeInsets.all(24),
-            color: c.withOpacity(0.92),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Text(found ? '${color.toUpperCase()} BIN' : 'Show a waste item',
-                  style: const TextStyle(fontSize: 34, color: Colors.white,
-                      fontWeight: FontWeight.bold)),
-              if (found) Text('$binType • ${(conf * 100).toStringAsFixed(0)}%',
-                  style: const TextStyle(fontSize: 18, color: Colors.white)),
-            ]),
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 250),
+            child: found
+                ? KeyedSubtree(key: ValueKey(name), child: resultCard(c))
+                : KeyedSubtree(key: const ValueKey('empty'), child: emptyCard()),
           ),
         ),
       ]),

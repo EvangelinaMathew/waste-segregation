@@ -26,6 +26,7 @@ class _ScannerState extends State<Scanner> {
   Timer? timer;
   String name = '', binType = '', color = '';
   double conf = 0;
+  String status = '';
   List<String> guide = [];
   List<Map<String, dynamic>> dets = [];
   final recent = <String>[];
@@ -58,7 +59,8 @@ class _ScannerState extends State<Scanner> {
       final req = http.MultipartRequest('POST', Uri.parse(apiUrl))
         ..files.add(http.MultipartFile.fromBytes(
             'image', await shot.readAsBytes(), filename: 'f.jpg'));
-      final res = await http.Response.fromStream(await req.send());
+      final res = await http.Response.fromStream(await req.send())
+        .timeout(const Duration(seconds: 10));
       final j = jsonDecode(res.body);
       final key = (j['item'] ?? 'none').toString();
       recent.add(key);
@@ -75,8 +77,11 @@ class _ScannerState extends State<Scanner> {
               .map((e) => Map<String, dynamic>.from(e)).toList();
         });
       }
+      if (mounted && status.isNotEmpty) setState(() => status = '');
+
     } catch (e) {
       debugPrint('scan error: $e');
+      if (mounted) setState(() => status = 'Error: $e');
     }
     busy = false;
   }
@@ -218,11 +223,17 @@ class _ScannerState extends State<Scanner> {
               decoration: BoxDecoration(
                   color: const Color(0x99000000),
                   borderRadius: BorderRadius.circular(20)),
-              child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                Icon(Icons.recycling, color: Color(0xFF4CD964), size: 20),
-                SizedBox(width: 8),
-                Text('WasteWise  •  Live Scanner',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                const Icon(Icons.recycling, color: Color(0xFF4CD964), size: 20),
+                const SizedBox(width: 8),
+                Flexible(
+                  child: Text(
+                    status.isEmpty ? 'WasteWise  •  Live Scanner' : status,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                  ),
+                ),
               ]),
             ),
           ),

@@ -5,7 +5,8 @@ from pathlib import Path
 import numpy as np
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from PIL import Image
+from PIL import Image, ImageOps
+from ultralytics import YOLO
 import tensorflow as tf
 
 MODEL_DIR = Path(__file__).resolve().parent / "model"
@@ -106,28 +107,46 @@ general.predict(np.zeros((1, 224, 224, 3), dtype="float32"), verbose=0)
 print("Models ready. Classes:", labels, flush=True)
 
 
-def preprocess_image(file_bytes):
-    img = Image.open(io.BytesIO(file_bytes)).convert("RGB").resize(IMG_SIZE, Image.LANCZOS)
-    arr = np.array(img, dtype=np.float32)
+# ---- YOLO detector (block 3A) ----
+YOLO_CONF = 0.35   # lower = more boxes, higher = fewer wrong ones
+yolo = YOLO(str(MODEL_DIR / "yolo_waste.pt"))
+yolo.predict(np.zeros((640, 640, 3), dtype="uint8"), verbose=False)
+
+YOLO_BIN = {
+    "cardboard": BLUE, "paper": BLUE, "glass": BLUE, "metal": BLUE,
+    "plastic": BLUE, "plastic_container": BLUE,
+    "plastic_bag": BLACK, "paper_cup": BLACK, "stationery": BLACK,
+    "thermocol": BLACK, "trash": BLACK, "fabric": BLACK,
+}
+
+
+def prep(img):
+    """PIL RGB image -> (1,224,224,3) model input, same as training."""
+    arr = np.array(img.resize(IMG_SIZE, Image.LANCZOS), dtype=np.float32)
     arr = tf.keras.applications.mobilenet_v2.preprocess_input(arr)
     return np.expand_dims(arr, 0)
 
 
-def respond(key, name, row, conf, source):
+def build(key, name, row, conf, source, box=None):
     color, kind = row
     if kind.startswith("E-waste"):
         guide = EWASTE_GUIDE
     else:
         guide = ITEM_GUIDE.get(key) or GUIDE[color]
     pretty = NICE.get(key) or name.replace("_", " ").capitalize()
-    return jsonify({"item": key, "name": pretty, "bin": kind, "color": color,
-                    "guideline": guide, "tip": guide[-1],
-                    "confidence": round(float(conf), 4), "source": source})
+    return {"item": key, "name": pretty, "bin": kind, "color": color,
+            "guideline": guide, "tip": guide[-1],
+            "confidence": round(float(conf), 4), "source": source, "box": box}
 
 
-def none_result(conf):
-    return jsonify({"item": "none", "name": None, "bin": None, "color": None,
-                    "guideline": [], "tip": None, "confidence": round(conf, 4)})
+def reply(dets, conf=0.0):
+    if not dets:
+        return jsonify({"item": "none", "name": None, "bin": None, "color": None,
+                        "guideline": [], "tip": None, "confidence": round(conf, 4),
+                        "detections": []})
+    out = dict(max(dets, key=lambda d: d["confidence"]))   # best one = main card
+    out["detections"] = dets                               # all boxes for the overlay
+    return jsonify(out)
 
 
 @app.route("/health")
@@ -140,32 +159,53 @@ def classify():
     if "image" not in request.files:
         return jsonify({"error": "No image file provided. Use field name 'image'."}), 400
     try:
-        x = preprocess_image(request.files["image"].read())
+        raw = request.files["image"].read()
+        img = ImageOps.exif_transpose(Image.open(io.BytesIO(raw))).convert("RGB")
+        x = prep(img)
     except Exception as exc:
         return jsonify({"error": f"Could not decode image: {exc}"}), 422
+    W, H = img.size
 
-    # General model first: pens and electronics get priority
+    # 1) General model: pens and electronics get priority (unchanged)
     gp = general.predict(x, verbose=0)
     top = tf.keras.applications.mobilenet_v2.decode_predictions(gp, top=5)[0]
     print("general top5:", [(n, round(float(p), 2)) for _, n, p in top], flush=True)
     for _, n, p in top:
         if n in OVERRIDE and float(p) >= OVERRIDE_THRESHOLD:
-            return respond(n, n, OVERRIDE[n], p, "general")
+            return reply([build(n, n, OVERRIDE[n], p, "general")])
 
-    # Your trained model
+    # 2) YOLO finds the objects, custom classifier refines each crop
+    res = yolo.predict(img, conf=YOLO_CONF, imgsz=640, verbose=False)[0]
+    boxes = sorted(res.boxes, key=lambda b: -float(b.conf))[:3]
+    dets = []
+    for b in boxes:
+        ycls, yconf = res.names[int(b.cls)], float(b.conf)
+        x1, y1, x2, y2 = [float(v) for v in b.xyxy[0]]
+        box = [x1 / W, y1 / H, x2 / W, y2 / H]
+        pad = 0.1 * max(x2 - x1, y2 - y1)
+        crop = img.crop((max(0, x1 - pad), max(0, y1 - pad),
+                         min(W, x2 + pad), min(H, y2 + pad)))
+        probs = model.predict(prep(crop), verbose=0)[0]
+        i = int(np.argmax(probs))
+        item, conf = labels[i], float(probs[i])
+        print("yolo:", ycls, round(yconf, 2), "| custom:", item, round(conf, 2), flush=True)
+        if item != "background" and conf >= THRESHOLD and item in BIN:
+            dets.append(build(item, item, BIN[item], conf, "yolo+custom", box))
+        elif ycls in YOLO_BIN:
+            dets.append(build(ycls, ycls, YOLO_BIN[ycls], yconf, "yolo", box))
+    if dets:
+        return reply(dets)
+
+    # 3) No boxes: whole-frame fallback (your old logic)
     probs = model.predict(x, verbose=0)[0]
     i = int(np.argmax(probs))
     item, conf = labels[i], float(probs[i])
     print("custom:", item, round(conf, 2), flush=True)
     if item != "background" and conf >= THRESHOLD and item in BIN:
-        return respond(item, item, BIN[item], conf, "custom")
-
-    # General model as a last resort
+        return reply([build(item, item, BIN[item], conf, "custom")])
     for _, n, p in top[:3]:
         if n in IMAGENET_BIN and float(p) >= GENERAL_THRESHOLD:
-            return respond(n, n, IMAGENET_BIN[n], p, "general")
-    return none_result(conf)
-
-
+            return reply([build(n, n, IMAGENET_BIN[n], p, "general")])
+    return reply([], conf)
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5050, debug=False)

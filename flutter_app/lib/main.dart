@@ -27,6 +27,7 @@ class _ScannerState extends State<Scanner> {
   String name = '', binType = '', color = '';
   double conf = 0;
   List<String> guide = [];
+  List<Map<String, dynamic>> dets = [];
   final recent = <String>[];
 
   static const palette = {
@@ -70,6 +71,8 @@ class _ScannerState extends State<Scanner> {
           color = j['color'] ?? '';
           conf = (j['confidence'] as num).toDouble();
           guide = (j['guideline'] as List?)?.map((e) => e.toString()).toList() ?? [];
+          dets = ((j['detections'] as List?) ?? [])
+              .map((e) => Map<String, dynamic>.from(e)).toList();
         });
       }
     } catch (e) {
@@ -84,7 +87,34 @@ class _ScannerState extends State<Scanner> {
     cam.dispose();
     super.dispose();
   }
-
+  Widget boxesOverlay(double w, double h) {
+    double n(dynamic v) => (v as num).toDouble();
+    return Stack(children: [
+      for (final d in dets)
+        if (d['box'] != null)
+          Positioned(
+            left: n(d['box'][0]) * w,
+            top: n(d['box'][1]) * h,
+            width: (n(d['box'][2]) - n(d['box'][0])) * w,
+            height: (n(d['box'][3]) - n(d['box'][1])) * h,
+            child: Container(
+              decoration: BoxDecoration(
+                border: Border.all(
+                    color: palette[d['color']] ?? Colors.white, width: 3)),
+              alignment: Alignment.topLeft,
+              child: Container(
+                color: palette[d['color']] ?? Colors.white,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                child: Text(
+                  '${d['name']} ${((d['confidence'] as num) * 100).round()}%',
+                  style: const TextStyle(
+                    color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+    ]);
+  }
   Widget resultCard(Color c) {
     return Container(
       width: double.infinity,
@@ -170,7 +200,13 @@ class _ScannerState extends State<Scanner> {
           child: FittedBox(
             fit: BoxFit.cover,
             child: SizedBox(
-                width: ps.height, height: ps.width, child: CameraPreview(cam)),
+                width: ps.height, 
+                height: ps.width, 
+                 child: Stack(children: [
+                  CameraPreview(cam),
+                  boxesOverlay(ps.height, ps.width),
+                 ]),
+            ),
           ),
         ),
         SafeArea(
